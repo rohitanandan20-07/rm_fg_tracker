@@ -18,6 +18,11 @@ try:
 except Exception:
     pass
 
+# Allow manual override in deployed environments without restarting.
+if "api_base_override" not in st.session_state:
+    st.session_state.api_base_override = API_BASE
+API_BASE = st.session_state.api_base_override
+
 
 # ═══════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
@@ -287,12 +292,32 @@ st.markdown("""
 st.markdown('<div class="main-header">🏭 RM → FG Material Tracker</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Simulated Blockchain | Immutable Event Logging | Real-time Traceability</div>', unsafe_allow_html=True)
 
+# Connection configuration for cloud deployments (Render).
+with st.sidebar:
+    st.markdown("### Backend Connection")
+    configured_api_base = st.text_input(
+        "FastAPI Base URL",
+        value=API_BASE,
+        help="Example: https://rm-fg-tracker-api.onrender.com"
+    ).strip()
+    if configured_api_base and configured_api_base != st.session_state.api_base_override:
+        st.session_state.api_base_override = configured_api_base.rstrip("/")
+        st.rerun()
+    st.caption(f"Current API base: `{st.session_state.api_base_override}`")
+
+API_BASE = st.session_state.api_base_override.rstrip("/")
+
 # Backend status check
 backend_status = api_get("/")
 if backend_status:
-    st.success("✅ Backend connected | FastAPI running on port 8000")
+    st.success(f"✅ Backend connected | {API_BASE}")
 else:
-    st.error("❌ Cannot reach backend. Run: `uvicorn main:app --reload --port 8000`")
+    st.error(
+        "❌ Cannot reach backend.\n\n"
+        f"Tried: `{API_BASE}`\n\n"
+        "If deployed on Render, set **FastAPI Base URL** in the sidebar to your API service URL "
+        "(example: `https://rm-fg-tracker-api.onrender.com`)."
+    )
     st.stop()
 
 st.divider()

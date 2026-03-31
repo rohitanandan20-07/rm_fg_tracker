@@ -9,3 +9,14 @@ services:
         sync: false  # You will enter this manually in the Render dashboard
       - key: PYTHON_VERSION
         value: "3.11.9"
+
+  - type: web
+    name: rm-fg-tracker-dashboard
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run dashboard/streamlit_app.py --server.address 0.0.0.0 --server.port $PORT
+    envVars:
+      - key: API_BASE
+        sync: false  # Set to your API URL, e.g. https://rm-fg-tracker-api.onrender.com
+      - key: PYTHON_VERSION
+        value: "3.11.9"
