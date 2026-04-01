@@ -14,16 +14,9 @@ import pandas as pd
 
 
 def _default_api_from_env() -> str:
-    # Priority: FASTAPI_URL (Render guide) → API_BASE (legacy) → localhost
+    # Priority: FASTAPI_URL (Render guide) -> API_BASE (legacy) -> localhost
+    # Avoid st.secrets lookup so Streamlit does not show "No secrets files found" warnings.
     v = os.getenv("FASTAPI_URL") or os.getenv("API_BASE") or "http://localhost:8000"
-    try:
-        v = st.secrets.get("FASTAPI_URL", v)
-    except Exception:
-        pass
-    try:
-        v = st.secrets.get("API_BASE", v)
-    except Exception:
-        pass
     return v.rstrip("/")
 
 
