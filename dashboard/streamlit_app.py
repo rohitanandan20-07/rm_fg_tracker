@@ -2,54 +2,71 @@
 """
 RM → FG Tracker Dashboard
 Run with: streamlit run dashboard/streamlit_app.py
-Make sure FastAPI backend is running on port 8000 first.
+Local: FastAPI on port 8000. Render: set FASTAPI_URL to your API service URL.
 """
-import streamlit as st
-import requests
-import pandas as pd
+import os
 import time
 import json
 
-import os
-
-API_BASE = os.environ.get("API_BASE", "http://localhost:8000")
-try:
-    API_BASE = st.secrets.get("API_BASE", API_BASE)
-except Exception:
-    pass
-
-# Allow manual override in deployed environments without restarting.
-if "api_base_override" not in st.session_state:
-    st.session_state.api_base_override = API_BASE
-API_BASE = st.session_state.api_base_override
+import streamlit as st
+import requests
+import pandas as pd
 
 
-# ═══════════════════════════════════════════════════════════════
-# HELPER FUNCTIONS
-# ═══════════════════════════════════════════════════════════════
+def _default_api_from_env() -> str:
+    # Priority: FASTAPI_URL (Render guide) → API_BASE (legacy) → localhost
+    v = os.getenv("FASTAPI_URL") or os.getenv("API_BASE") or "http://localhost:8000"
+    try:
+        v = st.secrets.get("FASTAPI_URL", v)
+    except Exception:
+        pass
+    try:
+        v = st.secrets.get("API_BASE", v)
+    except Exception:
+        pass
+    return v.rstrip("/")
+
+
+def _api_base() -> str:
+    return st.session_state.api_base.rstrip("/")
+
 
 def api_post(endpoint: str, data: dict):
-    """POST to FastAPI. Returns (success, response_dict)."""
-    try:
-        response = requests.post(f"{API_BASE}{endpoint}", json=data, timeout=10)
-        return response.ok, response.json()
-    except requests.exceptions.ConnectionError:
-        return False, {"detail": "Cannot connect to backend. Is FastAPI running on port 8000?"}
-    except Exception as e:
-        return False, {"detail": str(e)}
+    """POST to FastAPI. Returns (success, response_dict). Retries once on cold start."""
+    base = _api_base()
+    last_err = None
+    for attempt in range(2):
+        try:
+            response = requests.post(f"{base}{endpoint}", json=data, timeout=15)
+            return response.ok, response.json()
+        except requests.exceptions.ConnectionError as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            return False, {"detail": "Cannot connect to backend. Check FASTAPI_URL / sidebar URL."}
+        except Exception as e:
+            return False, {"detail": str(e)}
+    return False, {"detail": str(last_err) if last_err else "Unknown error"}
 
 
 def api_get(endpoint: str):
-    """GET from FastAPI. Returns list or dict, or None on error."""
-    try:
-        response = requests.get(f"{API_BASE}{endpoint}", timeout=10)
-        if response.ok:
-            return response.json()
-        return None
-    except requests.exceptions.ConnectionError:
-        return None
-    except Exception:
-        return None
+    """GET from FastAPI. Returns list or dict, or None on error. Retries once on cold start."""
+    base = _api_base()
+    for attempt in range(2):
+        try:
+            response = requests.get(f"{base}{endpoint}", timeout=15)
+            if response.ok:
+                return response.json()
+            return None
+        except requests.exceptions.ConnectionError:
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            return None
+        except Exception:
+            return None
+    return None
 
 
 def format_event_type(event_type: str) -> str:
@@ -78,7 +95,7 @@ def status_color(status: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-# PAGE CONFIG
+# PAGE CONFIG + BACKEND URL (Render: FASTAPI_URL env var)
 # ═══════════════════════════════════════════════════════════════
 
 st.set_page_config(
@@ -87,6 +104,20 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+if "api_base" not in st.session_state:
+    st.session_state.api_base = _default_api_from_env()
+
+with st.sidebar:
+    st.markdown("### ⚙️ Configuration")
+    _typed = st.text_input(
+        "FastAPI Base URL",
+        value=st.session_state.api_base,
+        help="Your FastAPI Render URL e.g. https://rm-fg-tracker-api.onrender.com",
+    ).strip().rstrip("/")
+    st.session_state.api_base = _typed or _default_api_from_env()
+    st.caption(f"Connecting to: `{st.session_state.api_base}`")
+    st.divider()
 
 st.markdown("""
 <style>
@@ -292,22 +323,8 @@ st.markdown("""
 st.markdown('<div class="main-header">🏭 RM → FG Material Tracker</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Simulated Blockchain | Immutable Event Logging | Real-time Traceability</div>', unsafe_allow_html=True)
 
-# Connection configuration for cloud deployments (Render).
-with st.sidebar:
-    st.markdown("### Backend Connection")
-    configured_api_base = st.text_input(
-        "FastAPI Base URL",
-        value=API_BASE,
-        help="Example: https://rm-fg-tracker-api.onrender.com"
-    ).strip()
-    if configured_api_base and configured_api_base != st.session_state.api_base_override:
-        st.session_state.api_base_override = configured_api_base.rstrip("/")
-        st.rerun()
-    st.caption(f"Current API base: `{st.session_state.api_base_override}`")
-
-API_BASE = st.session_state.api_base_override.rstrip("/")
-
-# Backend status check
+# Backend status check (retries once after 2s — Render free tier cold start)
+API_BASE = _api_base()
 backend_status = api_get("/")
 if backend_status:
     st.success(f"✅ Backend connected | {API_BASE}")
@@ -315,8 +332,9 @@ else:
     st.error(
         "❌ Cannot reach backend.\n\n"
         f"Tried: `{API_BASE}`\n\n"
-        "If deployed on Render, set **FastAPI Base URL** in the sidebar to your API service URL "
-        "(example: `https://rm-fg-tracker-api.onrender.com`)."
+        "On Render: set **Environment → FASTAPI_URL** to your API URL "
+        "(e.g. `https://rm-fg-tracker-api.onrender.com`), or paste it in the sidebar.\n\n"
+        "Cold start: wait ~60s after idle, open the API URL once, then refresh this page."
     )
     st.stop()
 
@@ -842,10 +860,57 @@ with tab_validate:
                 st.divider()
                 st.markdown("#### Error Details:")
                 for error in result.get("errors", []):
+                    block_idx = error["block_index"]
                     st.warning(
-                        f"**Block #{error['block_index']}** — "
+                        f"**Block #{block_idx}** — "
                         f"`{error['issue']}`: {error['detail']}"
                     )
+
+                    with st.expander(f"🕒 View change history for Block #{block_idx}", expanded=False):
+                        hist = api_get(f"/api/blockchain-log-history?block_index={block_idx}&limit=50") or {}
+                        history = hist.get("history", [])
+
+                        if not history:
+                            st.info(
+                                "No change history recorded for this block yet.\n\n"
+                                "This table is populated by a database audit trigger. "
+                                "It will track any future edits (including Supabase Table Editor updates)."
+                            )
+                        else:
+                            rows = []
+                            for entry in reversed(history):  # oldest → newest for readability
+                                changed_at = entry.get("changed_at", "")
+                                op = entry.get("operation", "UPDATE")
+                                changes = entry.get("changes", []) or []
+                                if not changes:
+                                    rows.append(
+                                        {
+                                            "Timestamp": changed_at[:19],
+                                            "Operation": op,
+                                            "Field": "(no data_json changes detected)",
+                                            "From": None,
+                                            "To": None,
+                                        }
+                                    )
+                                else:
+                                    for ch in changes:
+                                        rows.append(
+                                            {
+                                                "Timestamp": changed_at[:19],
+                                                "Operation": op,
+                                                "Field": ch.get("field"),
+                                                "From": ch.get("from"),
+                                                "To": ch.get("to"),
+                                            }
+                                        )
+
+                            df_hist = pd.DataFrame(rows)
+                            st.dataframe(
+                                df_hist,
+                                use_container_width=True,
+                                hide_index=True,
+                                height=min(480, 40 + 32 * max(5, len(df_hist))),
+                            )
 
     st.divider()
     st.markdown("""

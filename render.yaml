@@ -1,3 +1,4 @@
+# Blueprint: two Web Services from one repo (rm_fg_tracker/)
 services:
   - type: web
     name: rm-fg-tracker-api
@@ -6,17 +7,17 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
-        sync: false  # You will enter this manually in the Render dashboard
+        sync: false
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.11.0"
 
   - type: web
     name: rm-fg-tracker-dashboard
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run dashboard/streamlit_app.py --server.address 0.0.0.0 --server.port $PORT
+    startCommand: streamlit run dashboard/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
-      - key: API_BASE
-        sync: false  # Set to your API URL, e.g. https://rm-fg-tracker-api.onrender.com
+      - key: FASTAPI_URL
+        sync: false
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.11.0"

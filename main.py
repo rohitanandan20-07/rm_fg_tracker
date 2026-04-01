@@ -10,16 +10,24 @@ from api.trace import router as trace_router
 from api.blockchain_routes import router as blockchain_router
 from api.materials import router as materials_router
 
+from blockchain.audit_setup import ensure_blockchain_log_audit
+from database.connection import engine
+
 app = FastAPI(
     title="RM → FG Tracker API",
     description="Material tracking system with simulated blockchain",
     version="1.0.0"
 )
 
-# Allow Streamlit (running on port 8501) to call this API
+# Streamlit (local + Render) → FastAPI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8501",
+        "http://localhost:3000",
+        "https://rm-fg-tracker-dashboard.onrender.com",
+    ],
+    allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,6 +41,16 @@ app.include_router(dispatch_router)
 app.include_router(trace_router)
 app.include_router(blockchain_router)
 app.include_router(materials_router)
+
+
+@app.on_event("startup")
+def _startup_init() -> None:
+    # Ensure audit trail exists so Validate Chain can show diffs/history.
+    # Never block API startup if DB role doesn't permit DDL in production.
+    try:
+        ensure_blockchain_log_audit(engine)
+    except Exception as exc:
+        print(f"[WARN] Audit setup skipped: {exc}")
 
 
 @app.get("/")
