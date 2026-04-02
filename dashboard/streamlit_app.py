@@ -28,35 +28,46 @@ def api_post(endpoint: str, data: dict):
     """POST to FastAPI. Returns (success, response_dict). Retries once on cold start."""
     base = _api_base()
     last_err = None
-    for attempt in range(2):
+    # Render free tiers can take time to wake; handle timeouts + temporary 5xx.
+    for attempt in range(3):
         try:
-            response = requests.post(f"{base}{endpoint}", json=data, timeout=15)
-            return response.ok, response.json()
-        except requests.exceptions.ConnectionError as e:
+            response = requests.post(f"{base}{endpoint}", json=data, timeout=30)
+            if response.ok:
+                return True, response.json()
+            # Retry only for transient errors
+            if response.status_code in (502, 503, 504, 429):
+                last_err = RuntimeError(f"Transient HTTP {response.status_code}")
+                time.sleep(2 * (attempt + 1))
+                continue
+            return False, {"detail": f"HTTP {response.status_code}: {response.text}"}
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_err = e
             if attempt == 0:
-                time.sleep(2)
+                time.sleep(3)
                 continue
-            return False, {"detail": "Cannot connect to backend. Check FASTAPI_URL / sidebar URL."}
+            time.sleep(2 * (attempt + 1))
+            continue
         except Exception as e:
             return False, {"detail": str(e)}
-    return False, {"detail": str(last_err) if last_err else "Unknown error"}
+    return False, {"detail": str(last_err) if last_err else "Cannot connect to backend"}
 
 
 def api_get(endpoint: str):
     """GET from FastAPI. Returns list or dict, or None on error. Retries once on cold start."""
     base = _api_base()
-    for attempt in range(2):
+    # Render free tiers can take time to wake; handle timeouts + temporary 5xx.
+    for attempt in range(3):
         try:
-            response = requests.get(f"{base}{endpoint}", timeout=15)
+            response = requests.get(f"{base}{endpoint}", timeout=30)
             if response.ok:
                 return response.json()
-            return None
-        except requests.exceptions.ConnectionError:
-            if attempt == 0:
-                time.sleep(2)
+            if response.status_code in (502, 503, 504, 429):
+                time.sleep(2 * (attempt + 1))
                 continue
             return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            time.sleep(2 * (attempt + 1))
+            continue
         except Exception:
             return None
     return None
